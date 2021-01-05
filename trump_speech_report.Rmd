@@ -1,7 +1,7 @@
 ---
 title: "MATH513 Big Data and Social Network Visualization Coursework"
-author: "VSK"
-date: "`r Sys.Date()"
+author: "kostas, victoria, sid"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
 output: pdf_document
 ---
 
@@ -37,7 +37,7 @@ txt_files_ls <- list.files("data")
 single_speech <- data_frame(speech = c(), location = c(), date = c())
 
 
-# because we are lazy we use Regular expressions in order to give the locatio and dates values
+# because we are lazy we use Regular expressions in order to give the location and dates values
 location_pattern <- "[A-z]+(?=-|[A-Z])" # this pattern matches all letters until the next char is uppercase or -, so "OhioSep21_2020.txt" returns "Ohio"
 day_pattern <- "[[:digit:]]+" # this pattern matches the first digits from a string until the next char is not a digit, "Ohio21_2020.txt" returns "21"
 # loop in the list of files
@@ -50,7 +50,9 @@ for (i in 1: length(txt_files_ls)){
   speech_date <- paste("2020-09", single_day, sep = '-') # we create the speech data with string concatenation
   
   
-  read_speech <- data_frame(speech = c(as.character(read_tsv(file_path, col_names=FALSE))),location = c(location_name), date = c(as_date(speech_date)))
+  read_speech <- data_frame(speech = c(as.character(read_tsv(file_path, col_names=FALSE))), #read_tsv creates a tibble object, so we need to convert it into a string
+                            location = c(location_name), 
+                            date = c(as_date(speech_date)))
   single_speech <- rbind(single_speech, read_speech)
                    
 }
@@ -65,7 +67,7 @@ single_speech
 #
 
 single_speech_split <- single_speech%>%
-  select(speech,location, date) %>%   # The speech column text is actually a dataframe, 
+  select(speech,location, date) %>%   
   unnest_tokens(word, speech)   # applying unnest_tokens() to it produced an error, so had to make it character
   
 # removing unuseful words
@@ -80,26 +82,126 @@ single_speech_split_clean <- single_speech_split_clean %>%
 single_speech_split_clean
 ```
 
-```{r graph, echo=FALSE}
+```{r graph, echo=FALSE, fig.height = 10,  fig.width = 10, warning = FALSE, message = FALSE}
+library(knitr)
 #
+# get frequencies of all the words
 word_frequency_table <- single_speech_split_clean %>%
   count(date, word) %>%
   group_by(date) %>%
   mutate(p = n / sum(n))
   
- 
-keywords <- c('biden','china','jobs','war','')
-
-  word_frequency_table %>%
-    filter(word %in% keywords) %>%
-    ggplot(aes(x = date, y = n)) +
-    geom_point() +
-    geom_line() +
-    labs(y = "Percentage of words") +
-  facet_wrap(~ word) +
-  scale_x_date(labels = date_format("%d %b %y"),
+# 
+# a vector containing the words we are interested in
+keywords <- c('biden','bernie','china','fake','america','people','job','country','nation')
+#
+# plotting
+word_frequency_table %>%
+  filter(word %in% keywords) %>%
+  ggplot(aes(x = date, y = p, color=word)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se=FALSE, color='black', size=0.2)+
+  geom_smooth(method = "loess")+
+  labs(title = "Change of word frequency in Donald Trump's rallies in September 2020",
+       x = "Rally date",
+       y = "Percentage of words") +
+  facet_wrap(~ word, ncol = 3, nrow = 3) +
+  scale_x_date(labels = date_format("%d %b"),
   limits = c(as_date("2020-09-02"),
   as_date("2020-09-24"))) +
-  theme(legend.position = "none")
+  scale_y_continuous(labels = scales::percent)+ # formating y axis to percentages
+  theme_bw()+
+  theme(legend.position = "none",
+        plot.title = element_text(size=20),
+        strip.text.x = element_text(size = 12, color = "white"),
+        strip.background =element_rect(fill="orange"),
+        strip.text = element_text(colour = 'black'))
+```
+In overall the world people has the highest 
 
-````
+
+### Most frequent words
+```{r most_frequent_words, echo=FALSE}
+kable(
+  single_speech_split_clean %>%
+  count(word) %>%
+  arrange(desc(n)) %>%
+  head(20),
+  col.names = c('Word', 'Frequency'), # Change column names
+  align = "lr") # Specify column alignment
+```
+
+## 2.3  Plotting the Words with Highest tf-idf Value
+
+```{r tf-idf, echo=FALSE, fig.height = 20, fig.width = 15, message=FALSE, warning=FALSE}
+require(data.table)
+word_tf_idf_table <- single_speech_split_clean %>%
+  count(location, word) %>%
+  bind_tf_idf(word, location, n) %>%
+  arrange(desc(tf_idf))
+
+d <- data.table(word_tf_idf_table, key='location')
+
+   
+word_tf_idf_table %>%
+  group_by(location) %>%
+  #arrange(desc(tf_idf)) %>%
+  slice_max(tf_idf, n=10) %>%
+  ggplot(aes(x=word, y=tf_idf, fill=location)) +
+  labs(x = "Top 10 tf-idf words", y = "tf-idf index", 
+       title = "Highest tf-idf words in Donald Trump's rallies in September 2020") +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(location~., scales ='free', ncol = 2, nrow = 5) +
+  theme_bw()+
+  theme(legend.position="none",
+          plot.title = element_text(size = 30),
+          axis.title = element_text(size = 25), 
+          axis.text = element_text(size = 20),
+          strip.text = element_text(size = 20, colour = 'black'),
+        strip.background =element_rect(fill="orange"))
+
+```
+
+## 2.4 Zipf’s Law
+
+```{r zipfs_law, echo=FALSE, message=FALSE}
+# the single_speech_split variabe is tokenized, without the stopwords been removed
+
+
+require(data.table)
+word_tf_idf_table_with_stop_words <- single_speech_split %>%
+  count(location, word) %>%
+  bind_tf_idf(word, location, n) %>%
+  arrange(desc(tf_idf))
+
+d <- data.table(word_tf_idf_table_with_stop_words, key='location')
+
+```
+```{r zipfs_law_graph, echo=FALSE, message=FALSE, warning=FALSE}
+scaleFUN <- function(x){
+  sprintf("%.4f", x) # (see sprintf documentation https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/sprintf)
+}# a function to format our y-axis to 4 decimal points, and have not scientific notation
+
+
+d <- d %>%
+  arrange(desc(tf)) %>%
+  mutate(rank= as.integer(rownames(d)))
+
+
+ggplot(d, aes(x=rank, y=tf)) +
+geom_step(aes(color=location)) +
+geom_smooth(method = 'lm',  color = "black", se=FALSE, fullrange=FALSE) +
+scale_x_continuous(trans="log10") +
+scale_y_continuous(trans='log10', labels = scaleFUN, limits=c(NA,0.08)) + # appears to be an issue when using log scale and setting limits, so scale continues was used instead the trans was set to log10 (see: https://github.com/tidyverse/ggplot2/issues/930)
+labs(title = "Zipf's Law for Donald Trump's Rallies Data",
+    x = 'Rank',
+    y = "Term frequency (tf)",
+    color = "Speech Location" )+
+theme(title = element_text(size= 13, face = 'bold'),
+      axis.text = element_text(size = 9, color = "black"),
+      axis.title = element_text(size = 10, color = "black")
+     ) 
+
+#
+```
